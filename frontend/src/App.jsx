@@ -35,6 +35,7 @@ const C = {
   blue:    "#38bdf8",
   amber:   "#fbbf24",
   purple:  "#a78bfa",
+  orange:  "#fb923c",
 };
 
 const fmt      = (n, d = 2) => n == null ? "—" : Number(n).toFixed(d);
@@ -591,6 +592,50 @@ export default function App() {
             <StatRow label="Volume"           value={live ? fmtLarge(live.volume) : "—"} color={C.green} border />
             <StatRow label="Trade Count"      value={live ? live.trade_count?.toLocaleString() : "—"} color={C.blue} border />
             <StatRow label="Return (last)"    value={live?.return != null ? `${(live.return*100).toFixed(4)}%` : "—"} color={live?.return >= 0 ? C.green : C.red} />
+          </div>
+
+          {/* Quant Metrics */}
+          <div style={{ background: C.card, border: `1px solid ${C.border}`, borderTop: `2px solid ${C.orange}`, borderRadius: 10, padding: "16px" }}>
+            <div style={{ color: C.muted, fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 4 }}>Quant</div>
+
+            {/* Sharpe Ratio */}
+            <div style={{ padding: "10px 0", borderBottom: `1px solid ${C.border}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ color: C.muted, fontSize: 12 }}>Sharpe Ratio</span>
+                <span style={{
+                  fontFamily: "monospace", fontSize: 13, fontWeight: 700,
+                  color: live?.sharpe == null ? C.muted
+                       : live.sharpe >= 1  ? C.green
+                       : live.sharpe >= 0  ? C.amber
+                       : C.red
+                }}>
+                  {live?.sharpe != null ? fmt(live.sharpe, 3) : "—"}
+                </span>
+              </div>
+              {live?.sharpe != null && (
+                <div style={{ fontSize: 10, color: C.muted, marginTop: 3 }}>
+                  {live.sharpe >= 2 ? "Excellent (>2)" : live.sharpe >= 1 ? "Good (1–2)" : live.sharpe >= 0 ? "Subpar (0–1)" : "Negative (<0)"}
+                </div>
+              )}
+              {live?.sharpe == null && (
+                <div style={{ fontSize: 10, color: C.muted, marginTop: 3 }}>Need 30 trades to calculate</div>
+              )}
+            </div>
+
+            {/* Max Drawdown */}
+            <div style={{ padding: "10px 0" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ color: C.muted, fontSize: 12 }}>Max Drawdown</span>
+                <span style={{ fontFamily: "monospace", fontSize: 13, fontWeight: 700, color: live?.max_drawdown < -1 ? C.red : live?.max_drawdown < 0 ? C.amber : C.muted }}>
+                  {live?.max_drawdown != null ? `${fmt(live.max_drawdown, 3)}%` : "—"}
+                </span>
+              </div>
+              {live?.max_drawdown != null && (
+                <div style={{ fontSize: 10, color: C.muted, marginTop: 3 }}>
+                  Peak-to-trough since session start
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Session */}

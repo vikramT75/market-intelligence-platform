@@ -171,14 +171,14 @@ def get_latest_metrics(
             if symbol:
                 cursor.execute("""
                     SELECT symbol, price, rolling_avg_20, return, volatility,
-                           rsi, volume, trade_count, change_24h_pct, trade_time
+                           rsi, volume, trade_count, change_24h_pct, sharpe, max_drawdown, trade_time
                     FROM crypto_metrics WHERE symbol = %s
                     ORDER BY id DESC LIMIT %s OFFSET %s
                 """, (symbol.upper(), limit, offset))
             else:
                 cursor.execute("""
                     SELECT symbol, price, rolling_avg_20, return, volatility,
-                           rsi, volume, trade_count, change_24h_pct, trade_time
+                           rsi, volume, trade_count, change_24h_pct, sharpe, max_drawdown, trade_time
                     FROM crypto_metrics
                     ORDER BY id DESC LIMIT %s OFFSET %s
                 """, (limit, offset))
@@ -196,7 +196,7 @@ def get_metrics_history(symbol: str, start: str, end: str):
         with conn.cursor() as cursor:
             cursor.execute("""
                 SELECT symbol, price, rolling_avg_20, return, volatility,
-                       rsi, volume, trade_count, change_24h_pct, trade_time
+                       rsi, volume, trade_count, change_24h_pct, sharpe, max_drawdown, trade_time
                 FROM crypto_metrics
                 WHERE symbol = %s AND trade_time BETWEEN %s AND %s
                 ORDER BY trade_time ASC
@@ -275,7 +275,7 @@ def get_summary():
             cursor.execute("""
                 SELECT DISTINCT ON (symbol)
                     symbol, price, rolling_avg_20, return, volatility,
-                    rsi, volume, trade_count, change_24h_pct, trade_time
+                    rsi, volume, trade_count, change_24h_pct, sharpe, max_drawdown, trade_time
                 FROM crypto_metrics ORDER BY symbol, id DESC
             """)
             rows = cursor.fetchall()
@@ -298,5 +298,6 @@ def _row_to_dict(row):
         "symbol": row[0], "price": row[1], "rolling_avg_20": row[2],
         "return": row[3], "volatility": row[4], "rsi": row[5],
         "volume": row[6], "trade_count": row[7], "change_24h_pct": row[8],
-        "trade_time": row[9].isoformat(),
+        "sharpe": row[9], "max_drawdown": row[10],
+        "trade_time": row[11].isoformat(),
     }
