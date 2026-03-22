@@ -265,7 +265,7 @@ function ToggleBtn({ active, onClick, children }) {
 export default function App() {
   const [symbol, setSymbol]             = useState("BTCUSDT");
   const [inputVal, setInputVal]         = useState("BTCUSDT");
-  const [availableSymbols, setAvailableSymbols] = useState(["BTCUSDT", "ETHUSDT"]);
+  const [availableSymbols, setAvailableSymbols] = useState(["BTCUSDT"]);
   const [live, setLive]                 = useState(null);
   const [history, setHistory]           = useState([]);
   const [recentTrades, setRecentTrades] = useState([]);
