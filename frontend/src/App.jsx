@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import {
   LineChart, BarChart,
   Line, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, ReferenceLine, Cell
+  Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot, Cell
 } from "recharts";
 
 const API     = "http://127.0.0.1:8000";
@@ -219,6 +219,36 @@ function VolumeTooltip({ active, payload, label }) {
   );
 }
 
+// ─── Signal Badge ────────────────────────────────────────────────────────
+function SignalBadge({ signal, strength, size = "normal" }) {
+  if (!signal || signal === "NEUTRAL") return (
+    <span style={{ color: C.muted, fontSize: 11, fontWeight: 600 }}>— NEUTRAL</span>
+  );
+  const isBuy   = signal === "BUY";
+  const color   = isBuy ? C.green : C.red;
+  const icon    = isBuy ? "▲" : "▼";
+  const isLarge = size === "large";
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 5,
+      padding: isLarge ? "4px 12px" : "2px 8px",
+      borderRadius: 20,
+      background: color + "22",
+      border: `1px solid ${color}55`,
+      color, fontWeight: 800,
+      fontSize: isLarge ? 13 : 11,
+      letterSpacing: "0.08em",
+    }}>
+      {icon} {signal}
+      {strength === "STRONG" && (
+        <span style={{ fontSize: 9, background: color + "33", padding: "1px 5px", borderRadius: 10, marginLeft: 2 }}>
+          STRONG
+        </span>
+      )}
+    </span>
+  );
+}
+
 // ─── Toggle Button ────────────────────────────────────────────────────────
 function ToggleBtn({ active, onClick, children }) {
   return (
@@ -249,6 +279,7 @@ export default function App() {
   const destroyedRef  = useRef(false);
   const latestDataRef = useRef(null);
   const lastChartPush = useRef(0);
+  const lastSignalRef = useRef({ signal: "NEUTRAL", signal_strength: "WEAK" });
 
   // ── Resizable panel ───────────────────────────────────────────────────────
   const [rightWidth, setRightWidth] = useState(300);
@@ -293,11 +324,13 @@ export default function App() {
         const step    = Math.max(1, Math.floor(data.length / 100));
         const sampled = data.filter((_, i) => i % step === 0).slice(-100);
         setHistory(sampled.map(d => ({
-          price:          Number(d.price),
-          rolling_avg_20: Number(d.rolling_avg_20),
-          rsi:            d.rsi != null ? Number(d.rsi) : null,
-          volume:         Number(d.volume),
-          trade_time:     new Date(d.trade_time).toLocaleTimeString(),
+          price:           Number(d.price),
+          rolling_avg_20:  Number(d.rolling_avg_20),
+          rsi:             d.rsi != null ? Number(d.rsi) : null,
+          volume:          Number(d.volume),
+          signal:          d.signal,
+          signal_strength: d.signal_strength,
+          trade_time:      new Date(d.trade_time).toLocaleTimeString(),
         })));
       }).catch(() => {});
   }, [symbol]);
@@ -327,6 +360,11 @@ export default function App() {
     return () => clearInterval(t);
   }, [fetchCandles]);
 
+  // Re-fetch candles immediately when switching to candle mode
+  useEffect(() => {
+    if (chartMode === "candle") fetchCandles();
+  }, [chartMode, fetchCandles]);
+
   // ── WebSocket + render loop ────────────────────────────────────────────────
   useEffect(() => {
     destroyedRef.current = false;
@@ -350,7 +388,11 @@ export default function App() {
     const renderLoop = setInterval(() => {
       const data = latestDataRef.current;
       if (!data) return;
-      setLive({ ...data });
+      // Hold last non-neutral signal so it stays visible between ticks
+      if (data.signal && data.signal !== "NEUTRAL") {
+        lastSignalRef.current = { signal: data.signal, signal_strength: data.signal_strength };
+      }
+      setLive({ ...data, signal: lastSignalRef.current.signal, signal_strength: lastSignalRef.current.signal_strength });
       setRecentTrades(prev => {
         if (prev[0]?.trade_time === data.trade_time) return prev;
         return [data, ...prev].slice(0, 10);
@@ -362,6 +404,8 @@ export default function App() {
           price: Number(data.price), rolling_avg_20: Number(data.rolling_avg_20),
           rsi: data.rsi != null ? Number(data.rsi) : null,
           volume: Number(data.volume),
+          signal: data.signal,
+          signal_strength: data.signal_strength,
           trade_time: new Date(data.trade_time).toLocaleTimeString(),
         };
         setHistory(prev => {
@@ -405,6 +449,9 @@ export default function App() {
           <span style={{ fontSize: 10, padding: "2px 10px", borderRadius: 20, background: statusColor + "22", color: statusColor, border: `1px solid ${statusColor}44`, fontWeight: 700, letterSpacing: "0.1em" }}>
             ● {wsStatus.toUpperCase()}
           </span>
+          {live?.signal && live.signal !== "NEUTRAL" && (
+            <SignalBadge signal={live.signal} strength={live.signal_strength} />
+          )}
         </div>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           {availableSymbols.map(s => (
@@ -474,6 +521,14 @@ export default function App() {
                   <Tooltip content={<LineTooltip />} />
                   <Line type="monotone" dataKey="price"          stroke={C.blue}   dot={false} strokeWidth={2} />
                   <Line type="monotone" dataKey="rolling_avg_20" stroke={C.purple} dot={false} strokeWidth={1.5} strokeDasharray="5 3" />
+                  {/* Signal markers */}
+                  {history.filter(d => d.signal && d.signal !== "NEUTRAL").map((d, i) => (
+                    <ReferenceDot key={i} x={d.trade_time} y={d.price}
+                      r={d.signal_strength === "STRONG" ? 6 : 4}
+                      fill={d.signal === "BUY" ? C.green : C.red}
+                      stroke={C.bg} strokeWidth={1.5}
+                    />
+                  ))}
                 </LineChart>
               </ResponsiveContainer>
             ) : (
@@ -535,7 +590,7 @@ export default function App() {
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead>
                   <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-                    {["Price","MA₂₀","Return","RSI","Volume","24h Δ","Time"].map(h => (
+                    {["Price","MA₂₀","Return","RSI","Volume","24h Δ","Signal","Time"].map(h => (
                       <th key={h} style={{ padding: "8px 14px", color: C.muted, fontWeight: 600, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", textAlign: "left", whiteSpace: "nowrap" }}>{h}</th>
                     ))}
                   </tr>
@@ -549,6 +604,7 @@ export default function App() {
                       <td style={{ padding: "8px 14px", fontFamily: "monospace", color: m.rsi > 70 ? C.red : m.rsi < 30 ? C.green : C.blue }}>{m.rsi != null ? fmt(m.rsi) : "—"}</td>
                       <td style={{ padding: "8px 14px", fontFamily: "monospace", color: C.green }}>{fmtLarge(m.volume)}</td>
                       <td style={{ padding: "8px 14px" }}><PctBadge value={m.change_24h_pct} /></td>
+                      <td style={{ padding: "8px 14px" }}><SignalBadge signal={m.signal} strength={m.signal_strength} /></td>
                       <td style={{ padding: "8px 14px", color: C.muted, fontSize: 11 }}>{m.trade_time ? new Date(m.trade_time).toLocaleTimeString() : "—"}</td>
                     </tr>
                   ))}
@@ -576,6 +632,31 @@ export default function App() {
             <div style={{ color: C.muted, fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>Live Price</div>
             <div style={{ fontFamily: "monospace", fontSize: 26, fontWeight: 800, color: priceColor, lineHeight: 1 }}>${fmtLarge(live?.price)}</div>
             <div style={{ marginTop: 6 }}><PctBadge value={priceChange} /></div>
+          </div>
+
+          {/* Signal */}
+          <div style={{
+            background: C.card, border: `1px solid ${C.border}`,
+            borderTop: `2px solid ${
+              !live?.signal || live.signal === "NEUTRAL" ? C.muted
+              : live.signal === "BUY" ? C.green : C.red
+            }`,
+            borderRadius: 10, padding: "16px"
+          }}>
+            <div style={{ color: C.muted, fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 10 }}>Signal</div>
+            <div style={{ marginBottom: 10 }}>
+              <SignalBadge signal={live?.signal} strength={live?.signal_strength} size="large" />
+            </div>
+            {live?.signal && live.signal !== "NEUTRAL" && (
+              <div style={{ fontSize: 11, color: C.muted, lineHeight: 1.6 }}>
+                {live.signal_strength === "STRONG"
+                  ? "Both MA crossover and RSI agree"
+                  : "Single indicator trigger"}
+              </div>
+            )}
+            {(!live?.signal || live.signal === "NEUTRAL") && (
+              <div style={{ fontSize: 11, color: C.muted }}>No active signal</div>
+            )}
           </div>
 
           {/* RSI Gauge */}
