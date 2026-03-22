@@ -5,8 +5,10 @@ import {
   Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot, Cell
 } from "recharts";
 
-const API     = "http://127.0.0.1:8000";
-const WS_BASE = "ws://127.0.0.1:8000/ws";
+// Use env var in production (set by Vite), fall back to localhost for dev
+const API     = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+const WS_BASE = (import.meta.env.VITE_API_URL || "http://127.0.0.1:8000")
+  .replace("http", "ws") + "/ws";
 
 // ─── Scrollbar styles ─────────────────────────────────────────────────────
 const scrollbarCSS = `

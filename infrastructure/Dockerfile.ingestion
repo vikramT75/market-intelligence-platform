@@ -1,0 +1,11 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY ingestion/binance_stream.py .
+COPY .env .
+
+CMD ["python", "binance_stream.py"]
