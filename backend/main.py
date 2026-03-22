@@ -5,7 +5,7 @@ import os
 import threading
 import time
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -54,7 +54,7 @@ def release_connection(conn):
 class ConnectionManager:
     def __init__(self):
         self.active: dict[str, list[WebSocket]] = {}
-        self.main_loop: asyncio.AbstractEventLoop | None = None  # FastAPI's event loop
+        self.main_loop: asyncio.AbstractEventLoop | None = None
 
     async def connect(self, symbol: str, ws: WebSocket):
         await ws.accept()
@@ -82,7 +82,6 @@ class ConnectionManager:
             self.disconnect(symbol, ws)
 
     def broadcast_from_thread(self, symbol: str, message: dict):
-        """Called from Kafka thread — schedules broadcast on FastAPI's event loop."""
         if self.main_loop is None:
             return
         asyncio.run_coroutine_threadsafe(
@@ -93,21 +92,19 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-# ── Capture FastAPI's event loop on startup ───────────────────────────────
+# ── Startup ───────────────────────────────────────────────────────────────
 @app.on_event("startup")
 async def startup():
     manager.main_loop = asyncio.get_running_loop()
     logger.info("FastAPI event loop captured.")
-    # Start Kafka thread after loop is captured
     thread = threading.Thread(target=kafka_broadcast_loop, daemon=True)
     thread.start()
 
 
-# ── Kafka Background Thread ───────────────────────────────────────────────
+# ── Kafka Thread ──────────────────────────────────────────────────────────
 def kafka_broadcast_loop():
     retry_delay = 2
     max_delay   = 30
-
     while True:
         try:
             logger.info("Kafka consumer: connecting...")
@@ -121,19 +118,25 @@ def kafka_broadcast_loop():
             )
             logger.info("Kafka consumer: connected.")
             retry_delay = 2
-
             for message in consumer:
                 metrics = message.value
                 symbol  = metrics.get("symbol", "").upper()
                 manager.broadcast_from_thread(symbol, metrics)
-
         except NoBrokersAvailable:
             logger.warning(f"Kafka unavailable. Retry in {retry_delay}s...")
         except Exception as e:
             logger.error(f"Kafka error: {e}. Retry in {retry_delay}s...")
-
         time.sleep(retry_delay)
         retry_delay = min(retry_delay * 2, max_delay)
+
+
+# ── Valid timeframes ──────────────────────────────────────────────────────
+TIMEFRAME_CONFIG = {
+    "1m":  {"minutes": 1,  "lookback_hours": 1},
+    "5m":  {"minutes": 5,  "lookback_hours": 6},
+    "15m": {"minutes": 15, "lookback_hours": 12},
+    "1h":  {"minutes": 60, "lookback_hours": 48},
+}
 
 
 # ── Routes ────────────────────────────────────────────────────────────────
@@ -202,6 +205,67 @@ def get_metrics_history(symbol: str, start: str, end: str):
     finally:
         release_connection(conn)
     return [_row_to_dict(r) for r in rows]
+
+
+@app.get("/metrics/candles")
+def get_candles(
+    symbol: str,
+    timeframe: str = Query("1m", regex="^(1m|5m|15m|1h)$"),
+):
+    """
+    Returns OHLCV candles for the given symbol and timeframe.
+    Automatically determines lookback window based on timeframe.
+    """
+    cfg      = TIMEFRAME_CONFIG[timeframe]
+    end_dt   = datetime.utcnow()
+    start_dt = end_dt - timedelta(hours=cfg["lookback_hours"])
+
+    bucket_minutes = cfg["minutes"]
+    conn = get_connection()
+    try:
+        with conn.cursor() as cursor:
+            # Use epoch-based bucketing — works for any interval including 5m, 15m
+            cursor.execute("""
+                SELECT
+                    to_timestamp(
+                        floor(extract(epoch FROM trade_time) / %(bucket_secs)s) * %(bucket_secs)s
+                    ) AT TIME ZONE 'UTC'                                     AS candle_time,
+                    (array_agg(price ORDER BY trade_time))[1]                AS open,
+                    MAX(price)                                               AS high,
+                    MIN(price)                                               AS low,
+                    (array_agg(price ORDER BY trade_time DESC))[1]           AS close,
+                    MAX(volume) - MIN(volume)                                AS vol_delta,
+                    AVG(rsi)                                                 AS avg_rsi,
+                    AVG(rolling_avg_20)                                      AS avg_ma20
+                FROM crypto_metrics
+                WHERE symbol = %(symbol)s AND trade_time BETWEEN %(start)s AND %(end)s
+                GROUP BY floor(extract(epoch FROM trade_time) / %(bucket_secs)s)
+                ORDER BY candle_time ASC
+            """, {
+                "symbol":      symbol.upper(),
+                "start":       start_dt,
+                "end":         end_dt,
+                "bucket_secs": bucket_minutes * 60,
+            })
+            rows = cursor.fetchall()
+    finally:
+        release_connection(conn)
+
+    candles = []
+    for row in rows:
+        candles.append({
+            "candle_time": row[0].isoformat(),
+            "open":        float(row[1]) if row[1] else None,
+            "high":        float(row[2]) if row[2] else None,
+            "low":         float(row[3]) if row[3] else None,
+            "close":       float(row[4]) if row[4] else None,
+            "vol_delta":   float(row[5]) if row[5] else None,
+            "avg_rsi":     float(row[6]) if row[6] else None,
+            "avg_ma20":    float(row[7]) if row[7] else None,
+        })
+
+    return {"symbol": symbol.upper(), "timeframe": timeframe, "count": len(candles), "candles": candles}
+
 
 @app.get("/metrics/summary")
 def get_summary():
